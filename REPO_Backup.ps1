@@ -5,8 +5,24 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 Add-Type -Name Win -Namespace Native -MemberDefinition '
 [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);
-[DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern int SetCurrentProcessExplicitAppUserModelID(string id);'
+[DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern int SetCurrentProcessExplicitAppUserModelID(string id);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);'
 [void][Native.Win]::ShowWindow([Native.Win]::GetConsoleWindow(), 0)
+
+# Только один экземпляр: если программа уже открыта, показываем её окно и выходим
+$script:mutex = New-Object Threading.Mutex($false, "Local\TaleTales.REPOBackup")
+try   { $first = $script:mutex.WaitOne(0) }
+catch [Threading.AbandonedMutexException] { $first = $true }   # прошлый экземпляр завершился аварийно
+if (-not $first) {
+    $h = [Native.Win]::FindWindow([NullString]::Value, "R.E.P.O. Backup")   # $null PowerShell передал бы как ""
+    if ($h -ne [IntPtr]::Zero) {
+        if ([Native.Win]::IsIconic($h)) { [void][Native.Win]::ShowWindow($h, 9) }   # 9 = SW_RESTORE
+        [void][Native.Win]::SetForegroundWindow($h)
+    }
+    exit
+}
 # свой ID приложения: отдельная кнопка на панели задач со своей иконкой, а не значок PowerShell
 [void][Native.Win]::SetCurrentProcessExplicitAppUserModelID("TaleTales.REPOBackup")
 
