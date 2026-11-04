@@ -443,31 +443,47 @@ function Animate-List($delay = 0) {
 }
 
 # ---------- логика ----------
-function Invoke-Backup {
-    $new = 0
-    if (-not (Test-Path $src)) { return 0 }
-    foreach ($save in Get-ChildItem $src -Directory -Filter "REPO_SAVE_*") {
-        try {
-            $files = Get-ChildItem $save.FullName -Recurse -File -ErrorAction Stop
-            if (-not $files) { continue }
-            $stamp  = ($files | Measure-Object LastWriteTime -Maximum).Maximum.ToString("yyyy-MM-dd_HH-mm-ss")
-            $target = Join-Path $dst $save.Name
-            $copy   = Join-Path $target $stamp
-            if (Test-Path $copy) { continue }
-            New-Item -ItemType Directory -Force $copy | Out-Null
-            Copy-Item "$($save.FullName)\*" $copy -Recurse -Force -ErrorAction Stop
-            $new++
-            Get-ChildItem $target -Directory | Sort-Object Name -Descending |
-                Select-Object -Skip $keep | Remove-Item -Recurse -Force
-        } catch { }
+# Копирует один сейв. Возвращает $true, если появилась новая копия; при ошибке бросает исключение.
+# Копия сначала пишется во временную папку и переименовывается только целиком:
+# оборванное копирование не оставит «битую» копию, и на следующей проверке попытка повторится.
+function Backup-Save($dir, $trim = $true) {
+    $files = Get-ChildItem $dir -Recurse -File -ErrorAction Stop
+    if (-not $files) { return $false }
+    $stamp  = ($files | Measure-Object LastWriteTime -Maximum).Maximum.ToString("yyyy-MM-dd_HH-mm-ss")
+    $target = Join-Path $dst (Split-Path $dir -Leaf)
+    $copy   = Join-Path $target $stamp
+    if (Test-Path $copy) { return $false }
+    $tmp = "$copy.tmp"
+    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+    try {
+        New-Item -ItemType Directory -Force $tmp | Out-Null
+        Copy-Item "$dir\*" $tmp -Recurse -Force -ErrorAction Stop
+        Rename-Item $tmp $stamp -ErrorAction Stop
+    } catch {
+        Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        throw
     }
-    return $new
+    if ($trim) {
+        Get-ChildItem $target -Directory | Where-Object Name -notlike '*.tmp' | Sort-Object Name -Descending |
+            Select-Object -Skip $keep | Remove-Item -Recurse -Force
+    }
+    return $true
+}
+
+function Invoke-Backup {
+    $r = @{ New = 0; Failed = 0; Error = $null }
+    if (-not (Test-Path $src)) { return $r }
+    foreach ($save in Get-ChildItem $src -Directory -Filter "REPO_SAVE_*") {
+        try { if (Backup-Save $save.FullName) { $r.New++ } }
+        catch { $r.Failed++; $r.Error = $_.Exception.Message }
+    }
+    return $r
 }
 
 function Update-List($animate = $true) {
     $items = @(Get-ChildItem $dst -Directory -ErrorAction SilentlyContinue | ForEach-Object {
         $s = $_
-        Get-ChildItem $s.FullName -Directory | ForEach-Object {
+        Get-ChildItem $s.FullName -Directory | Where-Object Name -notlike '*.tmp' | ForEach-Object {
             $game = $s.Name -replace '^REPO_SAVE_(\d+)_(\d+)_(\d+)_(\d+)_(\d+).*$', 'Игра от $3.$2.$1 $4:$5'
             $time = $_.Name -replace '^(\d+)-(\d+)-(\d+)_(\d+)-(\d+)-(\d+)$', 'Копия от $3.$2 в $4:$5:$6'
             [pscustomobject]@{ Key = $_.Name; Item = [BackupItem]@{ Title = $game; Sub = $time; Save = $s.Name; Path = $_.FullName } }
@@ -530,11 +546,23 @@ function Hide-Dialog {
 $timer = New-Object Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromMinutes(1)
 
+$subBrush = $ui.SubText.Foreground
+function Reset-SubText { $ui.SubText.Foreground = $subBrush; $ui.SubText.ToolTip = $null }
+
 function Invoke-Tick {
-    $n = Invoke-Backup
+    $r = Invoke-Backup
     $now = Get-Date -Format "HH:mm"
-    if ($n -gt 0) { Set-TextAnimated $ui.SubText "Новых копий: $n · проверено в $now"; Update-List; Invoke-Ripple }
-    else          { Set-TextAnimated $ui.SubText "Изменений нет · проверено в $now" }
+    if ($r.New -gt 0) { Update-List; Invoke-Ripple }
+    if ($r.Failed -gt 0) {
+        # красный статус с причиной во всплывающей подсказке; через минуту таймер попробует снова
+        $ui.SubText.Foreground = $red
+        $ui.SubText.ToolTip = $r.Error
+        Set-TextAnimated $ui.SubText "⚠ Не удалось скопировать: $($r.Failed) · повторю через минуту"
+    } else {
+        Reset-SubText
+        if ($r.New -gt 0) { Set-TextAnimated $ui.SubText "Новых копий: $($r.New) · проверено в $now" }
+        else              { Set-TextAnimated $ui.SubText "Изменений нет · проверено в $now" }
+    }
 }
 
 function Set-State($on, $instant = $false) {
@@ -556,6 +584,7 @@ function Set-State($on, $instant = $false) {
         Anim $ui.Arc $OP 0 250 $null $easeOut 0 { if (-not $script:on) { $ui.ArcRot.BeginAnimation([Windows.Media.RotateTransform]::AngleProperty, $null) } }
         if (-not $instant) { Scale $ui.IconScale 1 450 0.85 $back }
         Set-TextAnimated $ui.StateText "Бэкапы выключены" $ui.StateShift
+        Reset-SubText
         Set-TextAnimated $ui.SubText "Нажми на кнопку, чтобы включить"
     }
 }
@@ -595,13 +624,19 @@ $ui.RestoreBtn.Add_Click({
         Show-Dialog "Игра запущена" "Сначала полностью закрой R.E.P.O., потом восстанавливай сейв."; return
     }
     $script:pick = $pick
-    Show-Dialog "Восстановить сейв?" "$($pick.Title)`n$($pick.Sub)`n`nТекущий сейв этой игры (если он есть) будет заменён копией." "Восстановить" {
+    Show-Dialog "Восстановить сейв?" "$($pick.Title)`n$($pick.Sub)`n`nТекущий сейв этой игры (если он есть) будет заменён копией. Перед этим он сам сохранится в список копий." "Восстановить" {
+        $out = Join-Path $src $script:pick.Save
+        # страховка: сначала копируем текущий сейв, чтобы откат можно было отменить
+        if (Test-Path $out) {
+            try { [void](Backup-Save $out $false) }   # без ротации: иначе могла бы удалиться восстанавливаемая копия
+            catch { Show-Dialog "Ошибка" "Не удалось сохранить копию текущего сейва, поэтому восстановление отменено.`n`n$($_.Exception.Message)"; return }
+        }
         try {
-            $out = Join-Path $src $script:pick.Save
             if (Test-Path $out) { Remove-Item $out -Recurse -Force }
             New-Item -ItemType Directory -Force $out | Out-Null
             Copy-Item "$($script:pick.Path)\*" $out -Recurse -Force -ErrorAction Stop
-            Show-Dialog "Готово!" "Сейв восстановлен. Запускай игру: он снова в списке сохранений."
+            Update-List $false
+            Show-Dialog "Готово!" "Сейв восстановлен. Запускай игру: он снова в списке сохранений.`n`nПрежний сейв сохранён в списке копий, если захочешь вернуть его."
         } catch { Show-Dialog "Ошибка" $_.Exception.Message }
     }
 })
