@@ -43,7 +43,8 @@ public static class MinHook {
 }
 '@
 
-Add-Type -TypeDefinition 'public class BackupItem { public string Title {get;set;} public string Sub {get;set;} public string Save {get;set;} public string Path {get;set;} }'
+# Карточка в списке: либо игра (папка с копиями), либо отдельная копия
+Add-Type -TypeDefinition 'public class BackupItem { public string Kind {get;set;} public string Title {get;set;} public string Sub {get;set;} public string Save {get;set;} public string Path {get;set;} public string Icon {get;set;} public string IconColor {get;set;} }'
 
 $src  = "$env:USERPROFILE\AppData\LocalLow\semiwork\Repo\saves"
 $dst  = "$PSScriptRoot\saves"
@@ -160,7 +161,7 @@ $keep = 30   # сколько последних копий хранить на 
       <Setter Property="Opacity" Value="0"/>
       <Setter Property="Foreground" Value="#878B91"/>
       <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="ToolTip" Value="Удалить копию"/>
+      <Setter Property="ToolTip" Value="Удалить"/>
       <Setter Property="Template"><Setter.Value>
         <ControlTemplate TargetType="Button">
           <Border x:Name="b" CornerRadius="8" Width="32" Height="32">
@@ -315,7 +316,11 @@ $keep = 30   # сколько последних копий хранить на 
         </StackPanel>
 
         <Grid Grid.Row="3" Margin="0,30,0,12">
-          <TextBlock Text="Копии сейвов" Foreground="#D7D8DB" FontSize="15" FontWeight="SemiBold"/>
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <Button x:Name="BackBtn" Style="{StaticResource IconBtn}" Content="&#xE72B;" ToolTip="Ко всем играм"
+                    Margin="-10,-10,2,-10" Visibility="Collapsed"/>
+            <TextBlock x:Name="SectionTitle" Text="Игры" Foreground="#D7D8DB" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          </StackPanel>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,-8,0">
             <TextBlock x:Name="CountText" Foreground="#5A5D63" FontSize="13" VerticalAlignment="Center"/>
             <Button x:Name="CleanBtn" Style="{StaticResource LinkBtn}" Content="Очистить старые" Margin="6,0,0,0" Visibility="Collapsed"/>
@@ -331,8 +336,8 @@ $keep = 30   # сколько последних копий хранить на 
                   <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                   <Button x:Name="DelBtn" Grid.Column="2" Style="{StaticResource DelBtn}" Content="&#xE711;" Tag="{Binding}" VerticalAlignment="Center"/>
                   <Border Width="38" Height="38" CornerRadius="10" Background="#26272C">
-                    <TextBlock Text="&#xE81C;" FontFamily="{StaticResource Icons}" FontSize="16"
-                               Foreground="{StaticResource Accent}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding Icon}" FontFamily="{StaticResource Icons}" FontSize="16"
+                               Foreground="{Binding IconColor}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                   </Border>
                   <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
                     <TextBlock Text="{Binding Title}" Foreground="#D7D8DB" FontSize="14" FontWeight="SemiBold"/>
@@ -378,7 +383,7 @@ $keep = 30   # сколько последних копий хранить на 
 
 $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
 $ui = @{}
-foreach ($n in 'Root','RootShift','RootScale','Header','Dot','MinBtn','CloseBtn','Power','PowerScale','Glow','Ripple','RippleScale',
+foreach ($n in 'BackBtn','SectionTitle','Root','RootShift','RootScale','Header','Dot','MinBtn','CloseBtn','Power','PowerScale','Glow','Ripple','RippleScale',
                'Ring','Arc','ArcRot','PowerIcon','IconScale','StateText','StateShift','SubText','CountText','CleanBtn','List','Empty',
                'RestoreBtn','FolderBtn','Dialog','DlgCard','DlgScale','DlgTitle','DlgText','DlgNo','DlgYes') {
     $ui[$n] = $win.FindName($n)
@@ -496,22 +501,70 @@ function Invoke-Backup {
     return $r
 }
 
+# ---------- список: игры (папки) и их копии ----------
+# У каждой игры R.E.P.O. своя папка сейва REPO_SAVE_<дата начала>, поэтому каждая новая игра
+# автоматически становится новой папкой в списке.
+$script:game = $null   # $null = главный экран со списком игр, иначе имя папки открытой игры
+$gameNames = @{}       # имя папки сейва -> «Игра #N» (номер по порядку начала игры)
+
+function Get-Plural($n, $one, $few, $many) {
+    $a = $n % 10; $b = $n % 100
+    if ($a -eq 1 -and $b -ne 11) { $one } elseif ($a -ge 2 -and $a -le 4 -and ($b -lt 12 -or $b -gt 14)) { $few } else { $many }
+}
+function Format-Ago($stamp) {
+    try { $t = [datetime]::ParseExact($stamp, 'yyyy-MM-dd_HH-mm-ss', $null) } catch { return "" }
+    $d = (Get-Date) - $t
+    if ($d.TotalMinutes -lt 1) { "только что" }
+    elseif ($d.TotalHours -lt 1) { "$([int][Math]::Floor($d.TotalMinutes)) мин назад" }
+    elseif ($d.TotalDays -lt 1)  { "$([int][Math]::Floor($d.TotalHours)) ч назад" }
+    else { $t.ToString("dd.MM.yyyy") }
+}
+
+# копии всех игр (или одной), в каждой игре новые сверху
+function Get-Copies($save = $null) {
+    @(Get-ChildItem $dst -Directory -Filter "REPO_SAVE_*" -ErrorAction SilentlyContinue |
+        Where-Object { -not $save -or $_.Name -eq $save } | ForEach-Object {
+            $s = $_
+            Get-ChildItem $s.FullName -Directory | Where-Object Name -notlike '*.tmp' | ForEach-Object {
+                [BackupItem]@{ Kind = 'copy'; Save = $s.Name; Path = $_.FullName
+                    Title = $_.Name -replace '^(\d+)-(\d+)-(\d+)_(\d+)-(\d+)-(\d+)$', 'Копия от $3.$2 в $4:$5:$6'
+                    Sub = Format-Ago $_.Name; Icon = [string][char]0xE81C; IconColor = '#FBB26A' }
+            }
+        } | Sort-Object Path -Descending)
+}
+
 function Update-List($animate = $true) {
-    $items = @(Get-ChildItem $dst -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-        $s = $_
-        Get-ChildItem $s.FullName -Directory | Where-Object Name -notlike '*.tmp' | ForEach-Object {
-            $game = $s.Name -replace '^REPO_SAVE_(\d+)_(\d+)_(\d+)_(\d+)_(\d+).*$', 'Игра от $3.$2.$1 $4:$5'
-            $time = $_.Name -replace '^(\d+)-(\d+)-(\d+)_(\d+)-(\d+)-(\d+)$', 'Копия от $3.$2 в $4:$5:$6'
-            [pscustomobject]@{ Key = $_.Name; Item = [BackupItem]@{ Title = $game; Sub = $time; Save = $s.Name; Path = $_.FullName } }
-        }
-    } | Sort-Object Key -Descending | ForEach-Object { $_.Item })
+    $all   = Get-Copies
+    $saves = @($all | Group-Object Save | Sort-Object Name)
+    $i = 0; foreach ($g in $saves) { $i++; $gameNames[$g.Name] = "Игра #$i" }
+    if ($script:game -and -not ($saves | Where-Object Name -eq $script:game)) { $script:game = $null }   # игру удалили целиком
+
+    if ($script:game) {
+        $items  = @($all | Where-Object Save -eq $script:game)
+        $hasOld = $items.Count -gt 1
+        $ui.SectionTitle.Text = $gameNames[$script:game]
+        $ui.BackBtn.Visibility = 'Visible'
+    } else {
+        $items = @($saves | Sort-Object Name -Descending | ForEach-Object {
+            $alive = Test-Path (Join-Path $src $_.Name)
+            $n = $_.Count
+            [BackupItem]@{ Kind = 'game'; Title = $gameNames[$_.Name]; Save = $_.Name; Path = Join-Path $dst $_.Name
+                Sub = "$n $(Get-Plural $n 'копия' 'копии' 'копий') · " +
+                      $(if ($alive) { $_.Name -replace '^REPO_SAVE_(\d+)_(\d+)_(\d+)_(\d+)_(\d+).*$', 'начата $3.$2 в $4:$5' } else { "сейв удалён игрой" })
+                Icon = [string][char]0xE8B7; IconColor = $(if ($alive) { '#FBB26A' } else { '#5A5D63' }) }
+        })
+        $hasOld = [bool]($saves | Where-Object Count -gt 1)
+        $ui.SectionTitle.Text = "Игры"
+        $ui.BackBtn.Visibility = 'Collapsed'
+    }
     $ui.List.ItemsSource = $items
     $ui.Empty.Visibility = if ($items.Count) { 'Collapsed' } else { 'Visible' }
     Set-TextAnimated $ui.CountText $(if ($items.Count) { "$($items.Count) шт." } else { "" })
-    $hasOld = [bool]($items | Group-Object Save | Where-Object Count -gt 1)
     $ui.CleanBtn.Visibility = if ($hasOld) { 'Visible' } else { 'Collapsed' }
     if ($animate) { Animate-List }
 }
+
+function Open-Game($save) { $script:game = $save; Update-List }
 
 # ---------- удаление копий ----------
 function Remove-Copy($path) {
@@ -635,47 +688,144 @@ $ui.DlgYes.Add_Click({
 
 $ui.RestoreBtn.Add_Click({
     $pick = $ui.List.SelectedItem
-    if (-not $pick) { Show-Dialog "Выбери копию" "Нажми на нужную копию в списке, потом на «Восстановить»."; return }
-    if (Get-Process -Name "REPO" -ErrorAction SilentlyContinue) {
-        Show-Dialog "Игра запущена" "Сначала полностью закрой R.E.P.O., потом восстанавливай сейв."; return
+    if (-not $pick -or $pick.Kind -ne 'copy') {
+        $hint = if ($script:game) { "Нажми на нужную копию в списке, потом на «Восстановить»." } else { "Открой игру в списке и выбери в ней копию." }
+        Show-Dialog "Выбери копию" $hint; return
     }
     $script:pick = $pick
-    Show-Dialog "Восстановить сейв?" "$($pick.Title)`n$($pick.Sub)`n`nТекущий сейв этой игры (если он есть) будет заменён копией. Перед этим он сам сохранится в список копий." "Восстановить" {
-        $out = Join-Path $src $script:pick.Save
-        # страховка: сначала копируем текущий сейв, чтобы откат можно было отменить
-        if (Test-Path $out) {
-            try { [void](Backup-Save $out $false) }   # без ротации: иначе могла бы удалиться восстанавливаемая копия
-            catch { Show-Dialog "Ошибка" "Не удалось сохранить копию текущего сейва, поэтому восстановление отменено.`n`n$($_.Exception.Message)"; return }
-        }
-        try {
-            if (Test-Path $out) { Remove-Item $out -Recurse -Force }
-            New-Item -ItemType Directory -Force $out | Out-Null
-            Copy-Item "$($script:pick.Path)\*" $out -Recurse -Force -ErrorAction Stop
-            Update-List $false
-            Show-Dialog "Готово!" "Сейв восстановлен. Запускай игру: он снова в списке сохранений.`n`nПрежний сейв сохранён в списке копий, если захочешь вернуть его."
-        } catch { Show-Dialog "Ошибка" $_.Exception.Message }
+    Show-Dialog "Восстановить сейв?" "$($gameNames[$pick.Save]) · $($pick.Title)`n`nТекущий сейв этой игры (если он есть) будет заменён копией. Перед этим он сам сохранится в список копий." "Восстановить" {
+        Start-Restore $script:pick
     }
 })
 
-# крестик на карточке
+# ---------- восстановление ----------
+# Возвращает $null при успехе или текст ошибки.
+function Restore-Copy($item) {
+    $out = Join-Path $src $item.Save
+    # страховка: сначала копируем текущий сейв, чтобы откат можно было отменить
+    if (Test-Path $out) {
+        try { [void](Backup-Save $out $false) }   # без ротации: иначе могла бы удалиться восстанавливаемая копия
+        catch { return "Не удалось сохранить копию текущего сейва, поэтому восстановление отменено.`n`n$($_.Exception.Message)" }
+    }
+    try {
+        if (Test-Path $out) { Remove-Item $out -Recurse -Force }
+        New-Item -ItemType Directory -Force $out | Out-Null
+        Copy-Item "$($item.Path)\*" $out -Recurse -Force -ErrorAction Stop
+        $script:known[$item.Save] = $true
+        return $null
+    } catch { return $_.Exception.Message }
+}
+
+# Пока игра запущена, сейв не трогаем: восстановим сами, как только её закроют.
+$script:pending = $null
+function Start-Restore($item) {
+    if (Get-Process -Name "REPO" -ErrorAction SilentlyContinue) {
+        $script:pending = $item
+        Show-Dialog "Закрой игру" "Пока R.E.P.O. запущена, сейв трогать нельзя.`n`nПросто выйди из игры: $($gameNames[$item.Save]) восстановится сама, как только игра закроется."
+        return
+    }
+    $had = Test-Path (Join-Path $src $item.Save)
+    $err = Restore-Copy $item
+    Update-List $false
+    if ($err) { Show-Dialog "Ошибка" $err; return }
+    $text = "$($gameNames[$item.Save]) снова в списке сохранений игры."
+    Show-Dialog "Готово!" ("Сейв восстановлен. $text" + $(if ($had) { "`n`nПрежний сейв сохранён в списке копий, если захочешь вернуть его." } else { "" }))
+    if (-not $win.IsActive) { Notify "Сейв восстановлен" "$text Можно запускать R.E.P.O." 'Info' }
+}
+
+# ---------- гибель команды ----------
+# Когда вся команда погибает, игра удаляет папку сейва. Раз в 3 секунды сверяем папки с прошлой проверкой.
+$script:known   = @{}   # сейвы, которые были в папке игры
+$script:missing = @{}   # пропали на прошлой проверке: ждём ещё одну, чтобы не сработать на перезаписи файла
+function Get-GameSaves { @(Get-ChildItem $src -Directory -Filter "REPO_SAVE_*" -ErrorAction SilentlyContinue | ForEach-Object Name) }
+
+function Invoke-Watch {
+    $now = Get-GameSaves
+    foreach ($n in @($script:known.Keys)) {
+        if ($now -contains $n) { $script:missing.Remove($n); continue }
+        if (-not $script:missing[$n]) { $script:missing[$n] = $true; continue }
+        $script:known.Remove($n); $script:missing.Remove($n)
+        $last = Get-Copies $n | Select-Object -First 1
+        if ($last) { Show-WipeAlert $last }
+    }
+    foreach ($n in $now) { $script:known[$n] = $true }
+    # отложенное восстановление: игру закрыли
+    if ($script:pending -and -not (Get-Process -Name "REPO" -ErrorAction SilentlyContinue)) {
+        $p = $script:pending; $script:pending = $null
+        Start-Restore $p
+    }
+}
+
+function Show-WipeAlert($item) {
+    Update-List $false
+    $name = $gameNames[$item.Save]
+    $script:wipeItem = $item
+    Notify "Сейв удалён" "${name}: похоже, команда погибла. Открой R.E.P.O. Backup, чтобы восстановить последнюю копию." 'Warning'
+    Show-Dialog "Сейв удалён" ("Похоже, команда погибла, и игра удалила сейв «$name».`n`n" +
+        "Восстановить последнюю копию ($($item.Title.ToLower()))?`n`nЕсли ты удалил сейв сам, просто нажми «Отмена».") "Восстановить" {
+        Start-Restore $script:wipeItem
+    }
+}
+
+# всплывающее уведомление Windows (окно может быть свёрнуто, а игрок в игре)
+Add-Type -AssemblyName System.Windows.Forms
+$tray = New-Object Windows.Forms.NotifyIcon
+try { $tray.Icon = New-Object Drawing.Icon "$PSScriptRoot\icon.ico" } catch { $tray.Icon = [Drawing.SystemIcons]::Information }
+$tray.Text = "R.E.P.O. Backup"
+function Show-Window {
+    $tray.Visible = $false
+    if ($win.WindowState -eq 'Minimized') { $win.WindowState = 'Normal' }
+    [void]$win.Activate()
+}
+$tray.Add_BalloonTipClicked({ Show-Window })
+$tray.Add_MouseClick({ Show-Window })
+$tray.Add_BalloonTipClosed({ $tray.Visible = $false })
+function Notify($title, $text, $icon = 'Info') {
+    $tray.Visible = $true
+    $tray.ShowBalloonTip(10000, $title, $text, [Windows.Forms.ToolTipIcon]$icon)
+}
+
+$watch = New-Object Windows.Threading.DispatcherTimer
+$watch.Interval = [TimeSpan]::FromSeconds(3)
+$watch.Add_Tick({ Invoke-Watch })
+
+# ---------- навигация и удаление ----------
+# клик по игре открывает её копии
+$ui.List.Add_SelectionChanged({
+    $it = $ui.List.SelectedItem
+    if ($it -and $it.Kind -eq 'game') { $script:openSave = $it.Save; [void]$win.Dispatcher.BeginInvoke([Action]{ Open-Game $script:openSave }) }
+})
+$ui.BackBtn.Add_Click({ $script:game = $null; Update-List })
+
+# крестик на карточке: удалить копию или всю игру
 $ui.List.AddHandler([Windows.Controls.Primitives.ButtonBase]::ClickEvent, [Windows.RoutedEventHandler]{
     param($s, $e)
     $b = $e.OriginalSource
     if ($b.Name -ne 'DelBtn') { return }
     $e.Handled = $true
     $script:delItem = $b.Tag
-    Show-Dialog "Удалить копию?" "$($b.Tag.Title)`n$($b.Tag.Sub)`n`nКопия будет удалена навсегда." "Удалить" {
-        Animate-Out @($script:delItem) { Remove-Copy $script:delItem.Path; Update-List $false }
-    } $true
+    if ($b.Tag.Kind -eq 'game') {
+        Show-Dialog "Удалить игру?" "$($b.Tag.Title)`n$($b.Tag.Sub)`n`nВсе копии этой игры будут удалены навсегда. Сам сейв в игре не тронется." "Удалить" {
+            Animate-Out @($script:delItem) { Remove-Item $script:delItem.Path -Recurse -Force -ErrorAction SilentlyContinue; Update-List $false }
+        } $true
+    } else {
+        Show-Dialog "Удалить копию?" "$($gameNames[$b.Tag.Save]) · $($b.Tag.Title)`n`nКопия будет удалена навсегда." "Удалить" {
+            Animate-Out @($script:delItem) { Remove-Copy $script:delItem.Path; Update-List $false }
+        } $true
+    }
 })
 
-# «Очистить старые»: у каждой игры остаётся только самая свежая копия
+# «Очистить старые»: у каждой игры (или у открытой) остаётся только самая свежая копия
 $ui.CleanBtn.Add_Click({
-    $old = @($ui.List.ItemsSource | Group-Object Save | ForEach-Object { $_.Group | Select-Object -Skip 1 })
+    $old = @(Get-Copies $script:game | Group-Object Save | ForEach-Object { $_.Group | Select-Object -Skip 1 })
     if (-not $old.Count) { return }
     $script:delItems = $old
-    Show-Dialog "Очистить старые копии?" "У каждой игры останется только самая свежая копия.`nБудет удалено копий: $($old.Count)." "Удалить" {
-        Animate-Out $script:delItems { foreach ($i in $script:delItems) { Remove-Copy $i.Path }; Update-List }
+    $who = if ($script:game) { "У этой игры" } else { "У каждой игры" }
+    Show-Dialog "Очистить старые копии?" "$who останется только самая свежая копия.`nБудет удалено копий: $($old.Count)." "Удалить" {
+        # анимируем только видимые карточки (на главном экране это игры, а не копии)
+        Animate-Out @($ui.List.ItemsSource | Where-Object Kind -eq 'copy' | Where-Object { $p = $_.Path; $script:delItems | Where-Object Path -eq $p }) {
+            foreach ($i in $script:delItems) { Remove-Copy $i.Path }; Update-List
+        }
     } $true
 })
 
@@ -720,7 +870,8 @@ $win.Add_Closing({
     if ($script:closing) { return }
     $e.Cancel = $true
     $script:closing = $true
-    $timer.Stop()
+    $timer.Stop(); $watch.Stop()
+    $tray.Visible = $false; $tray.Dispose()
     Scale $ui.RootScale 0.94 220 $null $easeIn
     Anim $ui.RootShift $TY 16 220 $null $easeIn
     Anim $ui.Root $OP 0 220 $null $easeIn 0 { $win.Close() }
@@ -730,4 +881,6 @@ $ui.StateText.Text = "Бэкапы выключены"
 $ui.SubText.Text = "Нажми на кнопку, чтобы включить"
 $script:on = $false
 Update-List $false
+foreach ($n in Get-GameSaves) { $script:known[$n] = $true }
+$watch.Start()
 [void]$win.ShowDialog()
