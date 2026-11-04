@@ -3,7 +3,7 @@
 ; Версию можно передать снаружи: ISCC.exe /DAppVersion=1.2.0 installer\REPO-Backup.iss
 
 #ifndef AppVersion
-  #define AppVersion "1.2.0"
+  #define AppVersion "1.3.0"
 #endif
 
 [Setup]
@@ -52,7 +52,8 @@ Name: "{autoprograms}\R.E.P.O. Backup"; Filename: "{sys}\wscript.exe"; Parameter
 Name: "{autodesktop}\R.E.P.O. Backup"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\REPO Backup.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "TaleTales.REPOBackup"; Tasks: desktopicon
 
 [Run]
-Filename: "{sys}\wscript.exe"; Parameters: """{app}\REPO Backup.vbs"""; Description: "{cm:LaunchProgram,R.E.P.O. Backup}"; Flags: postinstall nowait skipifsilent
+; без skipifsilent: после тихого обновления из программы она запускается снова
+Filename: "{sys}\wscript.exe"; Parameters: """{app}\REPO Backup.vbs"""; Description: "{cm:LaunchProgram,R.E.P.O. Backup}"; Flags: postinstall nowait
 
 [Code]
 // Закрывает запущенную программу (она работает как powershell.exe с REPO_Backup.ps1).

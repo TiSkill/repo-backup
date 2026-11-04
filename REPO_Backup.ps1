@@ -49,6 +49,7 @@ Add-Type -TypeDefinition 'public class BackupItem { public string Kind {get;set;
 $src  = "$env:USERPROFILE\AppData\LocalLow\semiwork\Repo\saves"
 $dst  = "$PSScriptRoot\saves"
 $keep = 30   # сколько последних копий хранить на каждый сейв
+$AppVersion = "1.3.0"   # при выпуске новой версии менять и здесь, и тег релиза на GitHub
 
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -279,6 +280,8 @@ $keep = 30   # сколько последних копий хранить на 
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
             <Ellipse x:Name="Dot" Width="8" Height="8" Margin="0,1,10,0"/>
             <TextBlock Text="R.E.P.O. Backup" Foreground="#D7D8DB" FontSize="15" FontWeight="SemiBold"/>
+            <TextBlock x:Name="VerText" Foreground="#5A5D63" FontSize="12" Margin="8,2,0,0" VerticalAlignment="Center"
+                       Cursor="Hand" ToolTip="Проверить обновления"/>
           </StackPanel>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
             <Button x:Name="MinBtn" Style="{StaticResource IconBtn}" Content="&#xE921;"/>
@@ -383,7 +386,7 @@ $keep = 30   # сколько последних копий хранить на 
 
 $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
 $ui = @{}
-foreach ($n in 'BackBtn','SectionTitle','Root','RootShift','RootScale','Header','Dot','MinBtn','CloseBtn','Power','PowerScale','Glow','Ripple','RippleScale',
+foreach ($n in 'VerText','BackBtn','SectionTitle','Root','RootShift','RootScale','Header','Dot','MinBtn','CloseBtn','Power','PowerScale','Glow','Ripple','RippleScale',
                'Ring','Arc','ArcRot','PowerIcon','IconScale','StateText','StateShift','SubText','CountText','CleanBtn','List','Empty',
                'RestoreBtn','FolderBtn','Dialog','DlgCard','DlgScale','DlgTitle','DlgText','DlgNo','DlgYes') {
     $ui[$n] = $win.FindName($n)
@@ -596,6 +599,7 @@ function Show-Dialog($title, $text, $yesText = "Ок", $action = $null, $danger 
     $ui.DlgTitle.Text = $title
     $ui.DlgText.Text  = $text
     $ui.DlgYes.Content = $yesText
+    $ui.DlgYes.Visibility = 'Visible'
     $ui.DlgNo.Visibility = if ($action) { 'Visible' } else { 'Collapsed' }
     [Windows.Controls.Grid]::SetColumn($ui.DlgYes, $(if ($action) { 1 } else { 0 }))
     [Windows.Controls.Grid]::SetColumnSpan($ui.DlgYes, $(if ($action) { 1 } else { 2 }))
@@ -896,4 +900,86 @@ $script:on = $false
 Update-List $false
 foreach ($n in Get-GameSaves) { $script:known[$n] = $true }
 $watch.Start()
+
+# ---------- обновления ----------
+$repo = "TiSkill/repo-backup"
+$installed = Test-Path "$PSScriptRoot\unins000.exe"   # поставлено установщиком, а не распаковано из zip
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+$ui.VerText.Text = "v$AppVersion"
+
+# диалог без кнопок (пока что-то идёт)
+function Show-Busy($title, $text) { Show-Dialog $title $text; $ui.DlgYes.Visibility = 'Collapsed' }
+
+# Ждёт фоновую задачу, не подвешивая окно: проверяет раз в 300 мс, потом вызывает $done с задачей.
+# (Код PowerShell при этом выполняется только в потоке окна.)
+function Wait-Task($task, $done) {
+    $t = New-Object Windows.Threading.DispatcherTimer
+    $t.Interval = [TimeSpan]::FromMilliseconds(300)
+    $t.Tag = @{ Task = $task; Done = $done }
+    $t.Add_Tick({ param($s) if ($s.Tag.Task.IsCompleted) { $s.Stop(); & $s.Tag.Done $s.Tag.Task } })
+    $t.Start()
+}
+function New-WebClient {
+    $c = New-Object Net.WebClient
+    $c.Headers['User-Agent'] = 'REPO-Backup'
+    $c.Encoding = [Text.Encoding]::UTF8
+    $c
+}
+
+function Check-Update($manual = $false) {
+    $script:manualCheck = $manual
+    $c = New-WebClient
+    $c.Headers['Accept'] = 'application/vnd.github+json'
+    $task = $c.DownloadStringTaskAsync("https://api.github.com/repos/$repo/releases/latest")
+    Wait-Task $task {
+        param($task)
+        if ($task.IsFaulted) {
+            if ($script:manualCheck) { Show-Dialog "Не удалось проверить" "Нет связи с GitHub. Попробуй позже." }
+            return
+        }
+        try { $rel = $task.Result | ConvertFrom-Json; $latest = [version]($rel.tag_name.TrimStart('v')) } catch { return }
+        if ($latest -le [version]$AppVersion) {
+            if ($script:manualCheck) { Show-Dialog "Обновлений нет" "У тебя последняя версия: $AppVersion." }
+            return
+        }
+        if ($script:dlgOpen -and -not $script:manualCheck) { return }   # не перебиваем другой диалог (например, о вайпе)
+        $script:update = $rel
+        # из описания релиза берём только пункты списка изменений (строки «- …»), без инструкций по установке
+        $notes = (($rel.body -replace '\*\*', '' -replace '`', '') -split '\r?\n' | Where-Object { $_ -match '^\s*[-*] ' } |
+            Select-Object -First 4 | ForEach-Object { '• ' + ($_ -replace '^\s*[-*] ', '').Trim() }) -join "`n"
+        if ($notes.Length -gt 400) { $notes = $notes.Substring(0, 400).TrimEnd() + '…' }
+        $yes = if ($installed) { "Обновить" } else { "Скачать" }
+        Show-Dialog "Вышла версия $latest" "У тебя $AppVersion.`n`n$notes" $yes { Start-Update }
+    }
+}
+
+function Start-Update {
+    $rel = $script:update
+    $asset = $rel.assets | Where-Object name -eq 'REPO-Backup-Setup.exe' | Select-Object -First 1
+    # запущено из zip или в релизе нет установщика: просто открываем страницу релиза
+    if (-not $installed -or -not $asset) { Start-Process $rel.html_url; return }
+    $script:setupPath = Join-Path $env:TEMP "REPO-Backup-Setup-$($rel.tag_name).exe"
+    $script:setupSize = $asset.size
+    Show-Busy "Скачиваю обновление…" "Версия $($rel.tag_name.TrimStart('v')). Это займёт несколько секунд, потом программа перезапустится."
+    $task = (New-WebClient).DownloadFileTaskAsync($asset.browser_download_url, $script:setupPath)
+    Wait-Task $task {
+        param($task)
+        $f = Get-Item $script:setupPath -ErrorAction SilentlyContinue
+        if ($task.IsFaulted -or -not $f -or $f.Length -ne $script:setupSize) {
+            Show-Dialog "Не удалось скачать" "Попробуй позже или скачай установщик со страницы релиза." "Открыть страницу" { Start-Process $script:update.html_url }
+            return
+        }
+        # ставим поверх; установщик сам запустит новую версию
+        Start-Process $script:setupPath -ArgumentList '/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LANG=ru'
+        $win.Close()
+    }
+}
+
+# клик по версии в шапке: проверить вручную (Handled — чтобы шапка не начала перетаскивать окно)
+$ui.VerText.Add_MouseLeftButtonDown({ param($s, $e) $e.Handled = $true; Check-Update $true })
+# автоматическая проверка через 3 секунды после запуска
+$updTimer = New-Object Windows.Threading.DispatcherTimer
+$updTimer.Interval = [TimeSpan]::FromSeconds(3)
+$updTimer.Add_Tick({ $updTimer.Stop(); Check-Update })
+$updTimer.Start()
 [void]$win.ShowDialog()
