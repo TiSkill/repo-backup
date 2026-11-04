@@ -737,6 +737,12 @@ function Start-Restore($item) {
 # Когда вся команда погибает, игра удаляет папку сейва. Раз в 3 секунды сверяем папки с прошлой проверкой.
 $script:known   = @{}   # сейвы, которые были в папке игры
 $script:missing = @{}   # пропали на прошлой проверке: ждём ещё одну, чтобы не сработать на перезаписи файла
+$script:lastSig = $null; $script:dirty = $false
+# «отпечаток» всех файлов сейвов: путь, время изменения, размер
+function Get-SavesSignature {
+    (Get-ChildItem $src -Recurse -File -ErrorAction SilentlyContinue | Where-Object FullName -like '*\REPO_SAVE_*' |
+        ForEach-Object { "$($_.FullName)|$($_.LastWriteTimeUtc.Ticks)|$($_.Length)" }) -join ';'
+}
 function Get-GameSaves { @(Get-ChildItem $src -Directory -Filter "REPO_SAVE_*" -ErrorAction SilentlyContinue | ForEach-Object Name) }
 
 function Invoke-Watch {
@@ -749,6 +755,13 @@ function Invoke-Watch {
         if ($last) { Show-WipeAlert $last }
     }
     foreach ($n in $now) { $script:known[$n] = $true }
+    # копия сразу после сохранения: игра что-то записала -> ждём, пока файлы перестанут меняться
+    # (одна проверка без изменений), и копируем. Итого 3–6 секунд после сохранения.
+    if ($script:on) {
+        $sig = Get-SavesSignature
+        if ($sig -ne $script:lastSig) { $script:lastSig = $sig; $script:dirty = $true }
+        elseif ($script:dirty) { $script:dirty = $false; Invoke-Tick }
+    }
     # отложенное восстановление: игру закрыли
     if ($script:pending -and -not (Get-Process -Name "REPO" -ErrorAction SilentlyContinue)) {
         $p = $script:pending; $script:pending = $null
