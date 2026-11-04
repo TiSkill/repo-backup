@@ -49,7 +49,7 @@ Add-Type -TypeDefinition 'public class BackupItem { public string Kind {get;set;
 $src  = "$env:USERPROFILE\AppData\LocalLow\semiwork\Repo\saves"
 $dst  = "$PSScriptRoot\saves"
 $keep = 30   # сколько последних копий хранить на каждый сейв
-$AppVersion = "1.3.0"   # при выпуске новой версии менять и здесь, и тег релиза на GitHub
+$AppVersion = "1.4.0"   # при выпуске новой версии менять и здесь, и тег релиза на GitHub
 
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -220,6 +220,34 @@ $AppVersion = "1.3.0"   # при выпуске новой версии меня
       </Setter.Value></Setter>
     </Style>
 
+    <!-- переключатель-«таблетка» для настроек -->
+    <Style x:Key="Toggle" TargetType="CheckBox">
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template"><Setter.Value>
+        <ControlTemplate TargetType="CheckBox">
+          <Border x:Name="track" Width="44" Height="24" CornerRadius="12" Background="#2C2D30">
+            <Ellipse x:Name="knob" Width="18" Height="18" Fill="#878B91" HorizontalAlignment="Left" Margin="3,0,0,0">
+              <Ellipse.RenderTransform><TranslateTransform/></Ellipse.RenderTransform>
+            </Ellipse>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="track" Property="Background" Value="#FBB26A"/>
+              <Setter TargetName="knob" Property="Fill" Value="#0E0E11"/>
+              <Trigger.EnterActions><BeginStoryboard><Storyboard>
+                <DoubleAnimation Storyboard.TargetName="knob" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" To="20" Duration="0:0:0.2">
+                  <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction></DoubleAnimation>
+              </Storyboard></BeginStoryboard></Trigger.EnterActions>
+              <Trigger.ExitActions><BeginStoryboard><Storyboard>
+                <DoubleAnimation Storyboard.TargetName="knob" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" To="0" Duration="0:0:0.2">
+                  <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction></DoubleAnimation>
+              </Storyboard></BeginStoryboard></Trigger.ExitActions>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value></Setter>
+    </Style>
+
     <Style TargetType="ScrollBar">
       <Setter Property="Width" Value="6"/>
       <Setter Property="Template"><Setter.Value>
@@ -284,6 +312,7 @@ $AppVersion = "1.3.0"   # при выпуске новой версии меня
                        Cursor="Hand" ToolTip="Проверить обновления"/>
           </StackPanel>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+            <Button x:Name="SetBtn" Style="{StaticResource IconBtn}" Content="&#xE713;" ToolTip="Настройки"/>
             <Button x:Name="MinBtn" Style="{StaticResource IconBtn}" Content="&#xE921;"/>
             <Button x:Name="CloseBtn" Style="{StaticResource IconBtn}" Content="&#xE8BB;"/>
           </StackPanel>
@@ -363,6 +392,27 @@ $AppVersion = "1.3.0"   # при выпуске новой версии меня
         </Grid>
       </Grid>
 
+      <!-- настройки -->
+      <Grid x:Name="Settings" Visibility="Collapsed" Background="#B3000000" Opacity="0">
+        <Border x:Name="SetCard" Background="#1C1D21" CornerRadius="16" Padding="22" Margin="28" VerticalAlignment="Center"
+                BorderBrush="#2C2D30" BorderThickness="1" RenderTransformOrigin="0.5,0.5">
+          <Border.RenderTransform><ScaleTransform x:Name="SetScale"/></Border.RenderTransform>
+          <StackPanel>
+            <TextBlock Text="Настройки" Foreground="#D7D8DB" FontSize="18" FontWeight="SemiBold"/>
+            <Grid Margin="0,18,0,0">
+              <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <StackPanel Margin="0,0,16,0">
+                <TextBlock Text="Включать бэкапы при запуске игры" Foreground="#D7D8DB" FontSize="14" TextWrapping="Wrap"/>
+                <TextBlock Foreground="#878B91" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" LineHeight="17"
+                           Text="Как только запустится R.E.P.O., бэкапы включатся сами. Программа при этом должна быть открыта (можно свернуть)."/>
+              </StackPanel>
+              <CheckBox x:Name="OptAuto" Grid.Column="1" Style="{StaticResource Toggle}" VerticalAlignment="Center"/>
+            </Grid>
+            <Button x:Name="SetDone" Style="{StaticResource MainBtn}" Content="Готово" Margin="0,22,0,0"/>
+          </StackPanel>
+        </Border>
+      </Grid>
+
       <!-- диалог -->
       <Grid x:Name="Dialog" Visibility="Collapsed" Background="#B3000000" Opacity="0">
         <Border x:Name="DlgCard" Background="#1C1D21" CornerRadius="16" Padding="22" Margin="28" VerticalAlignment="Center"
@@ -386,7 +436,7 @@ $AppVersion = "1.3.0"   # при выпуске новой версии меня
 
 $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
 $ui = @{}
-foreach ($n in 'VerText','BackBtn','SectionTitle','Root','RootShift','RootScale','Header','Dot','MinBtn','CloseBtn','Power','PowerScale','Glow','Ripple','RippleScale',
+foreach ($n in 'SetBtn','Settings','SetCard','SetScale','OptAuto','SetDone','VerText','BackBtn','SectionTitle','Root','RootShift','RootScale','Header','Dot','MinBtn','CloseBtn','Power','PowerScale','Glow','Ripple','RippleScale',
                'Ring','Arc','ArcRot','PowerIcon','IconScale','StateText','StateShift','SubText','CountText','CleanBtn','List','Empty',
                'RestoreBtn','FolderBtn','Dialog','DlgCard','DlgScale','DlgTitle','DlgText','DlgNo','DlgYes') {
     $ui[$n] = $win.FindName($n)
@@ -684,6 +734,12 @@ $ui.Power.Add_MouseLeave({
 
 $ui.FolderBtn.Add_Click({ New-Item -ItemType Directory -Force $dst | Out-Null; Start-Process explorer.exe $dst })
 $ui.DlgNo.Add_Click({ Hide-Dialog })
+$ui.SetBtn.Add_Click({ Show-Settings })
+$ui.SetDone.Add_Click({ Hide-Settings })
+# клик по затемнённому фону тоже закрывает настройки
+$ui.Settings.Add_MouseLeftButtonDown({ param($s, $e) if ($e.OriginalSource -eq $ui.Settings) { Hide-Settings } })
+$ui.OptAuto.Add_Click({ $settings.AutoStart = [bool]$ui.OptAuto.IsChecked; Save-Settings })
+
 $ui.DlgYes.Add_Click({
     Hide-Dialog
     $a = $script:dlgAction; $script:dlgAction = $null
@@ -749,7 +805,42 @@ function Get-SavesSignature {
 }
 function Get-GameSaves { @(Get-ChildItem $src -Directory -Filter "REPO_SAVE_*" -ErrorAction SilentlyContinue | ForEach-Object Name) }
 
+# ---------- настройки ----------
+# хранятся рядом с программой; если файла нет или он битый — значения по умолчанию
+$settingsPath = "$PSScriptRoot\settings.json"
+$settings = [pscustomobject]@{ AutoStart = $true }
+try {
+    $loaded = Get-Content $settingsPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    if ($null -ne $loaded.AutoStart) { $settings.AutoStart = [bool]$loaded.AutoStart }
+} catch { }
+function Save-Settings { try { $settings | ConvertTo-Json | Set-Content $settingsPath -Encoding UTF8 } catch { } }
+
+function Show-Settings {
+    $ui.OptAuto.IsChecked = $settings.AutoStart
+    $ui.Settings.Visibility = 'Visible'
+    Anim $ui.Settings $OP 1 200
+    Scale $ui.SetScale 1 380 0.88 $back
+}
+function Hide-Settings {
+    Scale $ui.SetScale 0.94 160 $null $easeIn
+    Anim $ui.Settings $OP 0 180 $null $easeIn 0 { $ui.Settings.Visibility = 'Collapsed' }
+}
+
+# автовключение: ловим момент, когда игра запустилась (была закрыта -> стала запущена).
+# Если игрок сам выключил бэкапы во время игры, повторно не включаем до следующего запуска игры.
+$script:gameWasRunning = $false
+function Invoke-AutoStart($running) {
+    if ($running -and -not $script:gameWasRunning -and $settings.AutoStart -and -not $script:on) {
+        Set-State $true
+        $script:lastSig = Get-SavesSignature; $script:dirty = $false   # бэкап только что сделан, лишний не нужен
+        Set-TextAnimated $ui.SubText "Включено автоматически: запущена R.E.P.O."
+        if (-not $win.IsActive) { Notify "Бэкапы включены" "Запущена R.E.P.O., сейвы сохраняются автоматически." 'Info' }
+    }
+    $script:gameWasRunning = $running
+}
+
 function Invoke-Watch {
+    Invoke-AutoStart ([bool](Get-Process -Name "REPO" -ErrorAction SilentlyContinue))
     $now = Get-GameSaves
     foreach ($n in @($script:known.Keys)) {
         if ($now -contains $n) { $script:missing.Remove($n); continue }

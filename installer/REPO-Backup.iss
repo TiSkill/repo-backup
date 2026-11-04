@@ -3,7 +3,7 @@
 ; Версию можно передать снаружи: ISCC.exe /DAppVersion=1.2.0 installer\REPO-Backup.iss
 
 #ifndef AppVersion
-  #define AppVersion "1.3.0"
+  #define AppVersion "1.4.0"
 #endif
 
 [Setup]
@@ -50,6 +50,10 @@ Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 ; AppUserModelID совпадает с тем, что выставляет сама программа: закреп на панели задач работает правильно
 Name: "{autoprograms}\R.E.P.O. Backup"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\REPO Backup.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; Comment: "Бэкапы сейвов R.E.P.O."; AppUserModelID: "TaleTales.REPOBackup"
 Name: "{autodesktop}\R.E.P.O. Backup"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\REPO Backup.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "TaleTales.REPOBackup"; Tasks: desktopicon
+
+[UninstallDelete]
+; настройки создаёт сама программа, установщик о них не знает
+Type: files; Name: "{app}\settings.json"
 
 [Run]
 ; без skipifsilent: после тихого обновления из программы она запускается снова
