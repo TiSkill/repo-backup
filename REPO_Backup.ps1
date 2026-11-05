@@ -12,7 +12,7 @@ Add-Type -Name Win -Namespace Native -MemberDefinition '
 [void][Native.Win]::ShowWindow([Native.Win]::GetConsoleWindow(), 0)
 
 # Только один экземпляр: если программа уже открыта, показываем её окно и выходим
-$script:mutex = New-Object Threading.Mutex($false, "Local\TaleTales.REPOBackup")
+$script:mutex = New-Object Threading.Mutex($false, "Local\TiSkill.REPOBackup")
 try   { $first = $script:mutex.WaitOne(0) }
 catch [Threading.AbandonedMutexException] { $first = $true }   # прошлый экземпляр завершился аварийно
 if (-not $first) {
@@ -24,7 +24,7 @@ if (-not $first) {
     exit
 }
 # свой ID приложения: отдельная кнопка на панели задач со своей иконкой, а не значок PowerShell
-[void][Native.Win]::SetCurrentProcessExplicitAppUserModelID("TaleTales.REPOBackup")
+[void][Native.Win]::SetCurrentProcessExplicitAppUserModelID("TiSkill.REPOBackup")
 
 # Перехват сворачивания (кнопка на панели задач, Win+↓): вместо мгновенного сворачивания запускаем свою анимацию
 $wpf = [Windows.Window].Assembly.Location, [Windows.Media.Visual].Assembly.Location,

@@ -11,7 +11,7 @@ AppId={{6F2B7C41-3E8A-4D5B-9C1E-7A2F4B8D9E10}
 AppName=R.E.P.O. Backup
 AppVersion={#AppVersion}
 AppVerName=R.E.P.O. Backup {#AppVersion}
-AppPublisher=TaleTales
+AppPublisher=TiSkill
 AppPublisherURL=https://github.com/TiSkill/repo-backup
 AppSupportURL=https://github.com/TiSkill/repo-backup/issues
 AppUpdatesURL=https://github.com/TiSkill/repo-backup/releases
@@ -48,8 +48,8 @@ Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 ; ярлык в «Пуске» — по нему программа находится в поиске Windows.
 ; AppUserModelID совпадает с тем, что выставляет сама программа: закреп на панели задач работает правильно
-Name: "{autoprograms}\R.E.P.O. Backup"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\REPO Backup.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; Comment: "Бэкапы сейвов R.E.P.O."; AppUserModelID: "TaleTales.REPOBackup"
-Name: "{autodesktop}\R.E.P.O. Backup"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\REPO Backup.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "TaleTales.REPOBackup"; Tasks: desktopicon
+Name: "{autoprograms}\R.E.P.O. Backup"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\REPO Backup.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; Comment: "Бэкапы сейвов R.E.P.O."; AppUserModelID: "TiSkill.REPOBackup"
+Name: "{autodesktop}\R.E.P.O. Backup"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\REPO Backup.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "TiSkill.REPOBackup"; Tasks: desktopicon
 
 [UninstallDelete]
 ; настройки создаёт сама программа, установщик о них не знает
